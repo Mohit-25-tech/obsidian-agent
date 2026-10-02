@@ -103,6 +103,22 @@ function spearman(points){
 module.exports={standardize,spearman,key,add,today,range,valid,bucket,next,granularity,aggregate,rolling,previous,comparison,shiftMonths,paired};
 
 return module.exports;})();
+const csvCore=(function(){const module={exports:{}};const exports=module.exports;
+function protectText(value){
+ const text=String(value);
+ return /^[\t\r ]*[=+\-@]/.test(text)?"'"+text:text;
+}
+function cell(value){
+ if(value===null||value===undefined)return '';
+ const text=typeof value==='number'&&Number.isFinite(value)?String(value):protectText(value);
+ return /[",\r\n]/.test(text)?'"'+text.replaceAll('"','""')+'"':text;
+}
+function serialize(headers,rows){
+ return [headers,...rows].map(row=>row.map(cell).join(',')).join('\r\n')+'\r\n';
+}
+module.exports={cell,serialize};
+
+return module.exports;})();
 function renderInteractive(dv,cfg,kind,data){
  const C=chartCore,L=cfg.labels,root=dv.container.createDiv({cls:'au-explorer'}),cleanups=[];
  const storageKey='assistant.charts.v1:'+app.vault.getName()+':'+kind;
@@ -136,7 +152,17 @@ function renderInteractive(dv,cfg,kind,data){
   const count=el(parent,'div',null,'au-muted'),empty=el(parent,'div',L.table_no_matches,'au-muted');
   const wrap=el(parent,'div',null,'au-table-wrap'),t=el(wrap,'table',null,'au-table'),head=el(el(t,'thead'),'tr');
   headers.forEach(x=>el(head,'th',x));const body=el(t,'tbody');let matched=rows,offset=0;
-  const more=btn(parent,L.more,append);
+  const actions=el(parent,'div',null,'au-toolbar'),more=btn(actions,L.more,append),status=el(actions,'span','','au-muted');
+  btn(actions,L.export_csv,()=>{
+   if(typeof csvCore==='undefined'||typeof Blob==='undefined'||typeof URL==='undefined'||typeof URL.createObjectURL!=='function'||typeof document==='undefined'||typeof document.createElement!=='function'){
+    status.textContent=L.csv_unavailable;return;
+   }
+   const blob=new Blob(['\ufeff',csvCore.serialize(headers,matched.map(row=>row.slice(0,headers.length)))],{type:'text/csv;charset=utf-8'});
+   const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`${kind}-details-${C.today()}.csv`;
+   try{if(typeof link.click!=='function')throw new Error('download_unavailable');link.click();}
+   catch{status.textContent=L.csv_unavailable;}
+   finally{if(typeof URL.revokeObjectURL==='function')URL.revokeObjectURL(url);}
+  });
   function append(){
    for(const row of matched.slice(offset,offset+cfg.interactive.table_page_size)){
     const tr=el(body,'tr');row.slice(0,headers.length).forEach(x=>el(tr,'td',String(x??'—')));

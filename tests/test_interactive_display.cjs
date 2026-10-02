@@ -1,5 +1,6 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const core=require('../shared/obsidian_ui/plugin-src/core.js');
+const csvCore=require('../shared/obsidian_ui/plugin-src/csv.js');
 const cfg=JSON.parse(fs.readFileSync('config/obsidian_ui.en.yaml.example'));cfg.locale='en';
 class Element {
  constructor(tag,opts={}){this.tag=tag;this.textContent=opts.text;this.children=[];this.attrs={};}
@@ -11,7 +12,8 @@ class Element {
 }
 let persisted=JSON.stringify({page:{preset:'custom',from:'2026-09-01',to:'2026-09-03',filters:{}},cards:{expense:{table:true,grain:'day'}}});
 let active=0;
-const sandbox={chartCore:core,Intl,console,app:{vault:{getName:()=> 'Test'}},localStorage:{getItem:()=>persisted,setItem:(k,v)=>persisted=v},getComputedStyle:()=>({getPropertyValue:()=> '#000'}),ResizeObserver:class{observe(){}disconnect(){}},echarts:{init:()=>{active++;return {setOption(){},on(){},resize(){},dispose(){active--;}}}}};
+let exportedBlob,downloaded,released;
+const sandbox={chartCore:core,csvCore,Intl,console,Blob:class{constructor(parts,options){this.parts=parts;this.options=options;}},URL:{createObjectURL(blob){exportedBlob=blob;return 'blob:test';},revokeObjectURL(url){released=url;}},document:{createElement:()=>({click(){downloaded={href:this.href,download:this.download};}})},app:{vault:{getName:()=> 'Test'}},localStorage:{getItem:()=>persisted,setItem:(k,v)=>persisted=v},getComputedStyle:()=>({getPropertyValue:()=> '#000'}),ResizeObserver:class{observe(){}disconnect(){}},echarts:{init:()=>{active++;return {setOption(){},on(){},resize(){},dispose(){active--;}}}}};
 vm.createContext(sandbox);vm.runInContext(fs.readFileSync('shared/obsidian_ui/plugin-src/dashboard.js','utf8'),sandbox);
 const container=new Element('div'),dv={container,component:{register(){}}};
 const data={charts:[{id:'expense',title:'Expense',type:'bar',method:'sum',rows:[{date:'2026-09-01',value:10,series:'Food'}]}]};
@@ -62,6 +64,14 @@ assert.equal(chartBuilds,beforeSearch,'typing must not rebuild the chart');
 assert.equal(searchContainer.all('tbody')[0].all('tr').length,1,'search includes later pages');
 assert.ok(searchContainer.all('td').some(e=>e.textContent==='Last merchant'));
 assert.equal(searchContainer.all('div').find(e=>e.textContent==='1 of 4 rows')?.textContent,'1 of 4 rows');
+input.value='merchant';input.oninput();
+assert.equal(searchContainer.all('tbody')[0].all('tr').length,2,'display remains paginated');
+searchContainer.all('button').find(b=>b.textContent===cfg.labels.export_csv).onclick();
+const exported=exportedBlob.parts.join('');
+assert.equal(exported.split('\r\n').filter(Boolean).length,4,'CSV has one header and all three matching rows');
+assert.ok(exported.includes('First merchant')&&exported.includes('Last merchant'));
+assert.equal(downloaded.href,'blob:test');assert.match(downloaded.download,/^search-test-details-\d{4}-\d{2}-\d{2}\.csv$/);
+assert.equal(exportedBlob.options.type,'text/csv;charset=utf-8');assert.equal(released,'blob:test');
 input.value='<B>SHOP</B>';input.oninput();
 assert.ok(searchContainer.all('td').some(e=>e.textContent==='<b>Shop</b>'),'HTML-like text stays plain text');
 assert.equal(searchContainer.all('b').length,0,'cell text must not become markup');
@@ -75,3 +85,14 @@ assert.equal(searchContainer.all('tbody')[0].all('tr').length,4,'pagination resu
 assert.equal(chartBuilds,beforeSearch);
 assert.ok(!persisted.includes('LAST')&&!persisted.includes('SHOP'),'query is not persisted');
 stopSearch();console.log('Table search: pagination, clearing, plain text and chart isolation passed');
+
+// Platforms without a local download API get a clear message after an explicit click.
+sandbox.Blob=undefined;persisted='{}';
+const unavailableContainer=new Element('div');
+const stopUnavailable=sandbox.renderInteractive({container:unavailableContainer,component:{register(){}}},cfg,'download-test',{
+ charts:[{id:'rows',title:'Rows',type:'categorical',snapshot:'2026-09-04',rows:searchRows.slice(0,1)}],
+});
+unavailableContainer.all('button').find(b=>b.textContent===cfg.labels.show_table).onclick();
+unavailableContainer.all('button').find(b=>b.textContent===cfg.labels.export_csv).onclick();
+assert.ok(unavailableContainer.all('span').some(e=>e.textContent===cfg.labels.csv_unavailable));
+stopUnavailable();console.log('CSV download: unavailable platforms show a localized message');
