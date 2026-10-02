@@ -36,3 +36,46 @@ assert.equal(deadlineOption.xAxis.minInterval,1);
 deadlineClick({name:'2026-10-01'});
 assert.ok(deadlineContainer.all('td').some(e=>e.textContent==='Future task'));
 stop();console.log('Deadline snapshot: future dates, horizontal axis and task drilldown passed');
+
+// A chart reset must preserve page controls and a neighboring chart's overrides.
+persisted=JSON.stringify({
+ page:{preset:'custom',from:'2026-09-01',to:'2026-09-03',filters:{category:'Health'}},
+ cards:{
+  first:{own:true,from:'2026-09-02',to:'2026-09-03',grain:'week',compare:true,smooth:'7'},
+  second:{own:true,from:'2026-09-01',to:'2026-09-02',grain:'day',compare:true,smooth:'7'},
+ },
+});
+const chartRows=[{date:'2026-09-01',value:1,series:'Steps',category:'Health'},
+ {date:'2026-09-02',value:2,series:'Steps',category:'Health'},
+ {date:'2026-09-03',value:3,series:'Steps',category:'Health'}];
+const resetData={filters:['category'],charts:[
+ {id:'first',title:'First',type:'line',method:'sum',smooth:true,filter_fields:['category'],rows:chartRows},
+ {id:'second',title:'Second',type:'line',method:'sum',smooth:true,filter_fields:['category'],rows:chartRows},
+]};
+const resetContainer=new Element('div');
+const resetClose=sandbox.renderInteractive({container:resetContainer,component:{register(){}}},cfg,'reset-test',resetData);
+const firstCard=resetContainer.all('section').find(s=>s.all('h3')[0]?.textContent==='First');
+const resetButton=firstCard.all('button').find(b=>b.textContent===cfg.labels.reset_chart);
+assert.equal(resetButton.tag,'button','native button supports Enter and Space activation');
+assert.equal(resetButton.type,'button');
+resetButton.onclick();
+let resetState=JSON.parse(persisted);
+assert.deepEqual(resetState.page.filters,{category:'Health'});
+assert.equal(resetState.page.from,'2026-09-01');assert.equal(resetState.page.to,'2026-09-03');
+assert.equal(resetState.cards.first.own,false,'reset chart inherits page dates');
+assert.equal(resetState.cards.first.grain,'auto');
+assert.equal(resetState.cards.first.compare,false);
+assert.equal(resetState.cards.first.smooth,'0');
+assert.equal(resetState.cards.first.from,resetState.page.from);
+assert.equal(resetState.cards.first.to,resetState.page.to);
+assert.equal(resetState.cards.second.own,true);
+assert.equal(resetState.cards.second.grain,'day');
+assert.equal(resetState.cards.second.compare,true);
+assert.equal(resetState.cards.second.smooth,'7');
+resetClose();
+const reopened=new Element('div');
+const reopenClose=sandbox.renderInteractive({container:reopened,component:{register(){}}},cfg,'reset-test',resetData);
+resetState=JSON.parse(persisted);
+assert.equal(resetState.cards.first.own,false,'reset remains saved after reopening');
+assert.equal(resetState.cards.second.own,true,'other chart survives reopening');
+reopenClose();console.log('Per-chart reset: keyboard control, isolation and persistence passed');
